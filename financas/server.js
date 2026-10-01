@@ -79,10 +79,31 @@ const server = http.createServer((req, res) => {
   });
 });
 
+const URL_APP = "http://localhost:" + PORT;
+const ABRIR = process.argv.includes("--abrir");
+
+function abrirNavegador() {
+  const { exec } = require("child_process");
+  const cmd = process.platform === "win32" ? `start "" "${URL_APP}"` : process.platform === "darwin" ? `open "${URL_APP}"` : `xdg-open "${URL_APP}"`;
+  exec(cmd, () => {});
+}
+
+// Se o app já estiver aberto (porta em uso), só abre o navegador e sai
+server.on("error", err => {
+  if (err.code === "EADDRINUSE") {
+    console.log("\n  ✦ O Aurum já está rodando. Abrindo o navegador…\n");
+    if (ABRIR) abrirNavegador();
+    setTimeout(() => process.exit(0), 800);
+    return;
+  }
+  throw err;
+});
+
 server.listen(PORT, "127.0.0.1", () => {
   console.log("");
-  console.log("  ✦ Aurum Finanças rodando em  http://localhost:" + PORT);
+  console.log("  ✦ Aurum Finanças rodando em  " + URL_APP);
   console.log("  ✦ Seus dados ficam em        " + DATA_FILE);
-  console.log("  ✦ Para parar: Ctrl + C");
+  console.log("  ✦ Deixe esta janela aberta enquanto usa o app. Para parar: feche-a ou Ctrl + C");
   console.log("");
+  if (ABRIR) abrirNavegador();
 });

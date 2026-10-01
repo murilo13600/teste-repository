@@ -13,6 +13,8 @@ Você precisa do [Node.js](https://nodejs.org) (qualquer versão recente). Não 
 
 **Windows:** dê dois cliques em `iniciar.bat`.
 
+**Atalho na Área de Trabalho:** dê dois cliques em `criar-atalho.bat` (só uma vez). Ele cria o atalho **Aurum** com o ícone dourado, abrindo com a janela do servidor minimizada. Se o app já estiver aberto, clicar de novo só abre o navegador.
+
 **Mac/Linux:** rode `./iniciar.sh`.
 
 **Ou pelo terminal:**

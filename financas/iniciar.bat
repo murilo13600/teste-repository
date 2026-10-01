@@ -3,11 +3,13 @@ title Aurum Financas
 cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Node.js nao encontrado. Instale em https://nodejs.org e rode de novo.
-  echo Enquanto isso, abrindo o app direto no navegador ^(dados ficam no navegador^).
+  echo.
+  echo   Node.js nao encontrado. Instale a versao LTS em https://nodejs.org
+  echo   Enquanto isso, abrindo o app direto no navegador - os dados ficam so no navegador.
+  echo.
   start "" "%~dp0index.html"
   pause
   exit /b
 )
-start "" http://localhost:3000
-node server.js
+node server.js --abrir
+if errorlevel 1 pause
