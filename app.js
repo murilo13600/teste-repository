@@ -84,7 +84,10 @@
     avulsos: [],      // contas únicas: { id, descricao, valor, vencimento, categoria, pagoEm }
     cartoes: [],
     faturas: {},      // { "AAAA-MM": { idCartao: { valor, pagoEm } } }
-    recebimentos: [], // { id, cliente, descricao, valor, previsto, recebidoEm, forma }
+    recebimentos: [], // { id, cliente, descricao, valor, previsto, recebidoEm, forma, fixoId? }
+    recFixos: [],     // recebimentos de todo mês: { id, cliente, descricao, valor, dia, forma, inicio, ativo, meses: ["AAAA-MM"] }
+    conta: { saldoInicial: null, inicio: null },  // saldo da conta no começo do mês `inicio`
+    reserva: { saldoInicial: 0, movimentos: [] }, // movimentos: { id, tipo: guardar|resgatar|rendimento, valor, data, descricao }
   });
 
   let db = EMPTY();
@@ -171,6 +174,35 @@
     };
   }
 
+  // Saldo em conta e reserva no fim do mês, acumulando desde o saldo inicial
+  function saldos(mk) {
+    const { saldoInicial, inicio } = db.conta;
+    if (saldoInicial == null || !inicio || mk < inicio) return null;
+    let conta = saldoInicial;
+    for (let m = inicio; m <= mk; m = addMonths(m, 1)) conta += totals(m).saldo;
+    let reserva = db.reserva.saldoInicial;
+    for (const mv of db.reserva.movimentos) {
+      const m = monthOf(mv.data);
+      if (m < inicio || m > mk) continue;
+      if (mv.tipo === "guardar") { conta -= mv.valor; reserva += mv.valor; }
+      else if (mv.tipo === "resgatar") { conta += mv.valor; reserva -= mv.valor; }
+      else reserva += mv.valor;
+    }
+    return { conta, reserva };
+  }
+
+  // Recebimentos fixos: cria o lançamento do mês na primeira vez que o mês é aberto
+  function gerarFixos(mk) {
+    let novos = false;
+    for (const f of db.recFixos) {
+      if (f.ativo === false || mk < f.inicio || f.meses.includes(mk)) continue;
+      db.recebimentos.push({ id: uid(), fixoId: f.id, cliente: f.cliente, descricao: f.descricao, valor: f.valor, forma: f.forma, previsto: dateInMonth(mk, f.dia), recebidoEm: null });
+      f.meses.push(mk);
+      novos = true;
+    }
+    if (novos) save();
+  }
+
   function statusFor(iso, done) {
     if (done) return { cls: "done", chip: `<span class="chip chip-ok">${I.check}pago</span>` };
     const d = daysUntil(iso);
@@ -212,6 +244,7 @@
     pix: { title: "Pagamentos do mês", render: renderPix },
     cartoes: { title: "Cartões de crédito", render: renderCartoes },
     receitas: { title: "Recebimentos", render: renderReceitas },
+    reserva: { title: "Saldo e reserva", render: renderReserva },
     ajustes: { title: "Ajustes", render: renderAjustes },
   };
 
@@ -224,6 +257,8 @@
   }
 
   function render(enter = false) {
+    gerarFixos(ui.month);
+    gerarFixos(currentMonth());
     const v = $("#view");
     $("#view-title").textContent = VIEWS[ui.view].title;
     $$(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.view === ui.view));
@@ -328,6 +363,10 @@
     const pctCC = t.ccCount ? t.ccPagos / t.ccCount : 0;
     const ag = agenda(mk);
     const late = ag.filter(i => !i.done && i.dir === "out" && daysUntil(i.date) < 0).length;
+    const s = saldos(mk);
+    const saldoMeta = s
+      ? `<span>Em conta <b>${money(s.conta)}</b></span><span>Reserva <b>${money(s.reserva)}</b></span>`
+      : db.conta.inicio ? "" : `<span><button class="btn btn-ghost btn-sm" data-action="edit-saldos">${I.wallet}Informar saldo da conta</button></span>`;
 
     return `
     <div class="stagger">
@@ -340,6 +379,7 @@
             <span>Compromissos <b>${money(t.pago + t.pendente)}</b></span>
             ${late ? `<span class="chip chip-late">${I.alert}${late} em atraso</span>` : ""}
           </div>
+          ${saldoMeta ? `<div class="hero-meta" style="margin-top:10px">${saldoMeta}</div>` : ""}
         </div>
         <div class="hero-rings">
           ${ring(pctPix, "pix pagos", `${t.pixPagos}/${t.pixCount}`, "#3ee0a0")}
@@ -645,6 +685,7 @@
     const maxC = ranking[0]?.[1] || 1;
     const totalAno = sum(anoRecebido, r => r.valor);
     const mesesComReceita = new Set(anoRecebido.map(r => monthOf(r.recebidoEm))).size;
+    const fixos = db.recFixos.filter(f => f.ativo !== false);
 
     return `
     <div class="summary-strip stagger">
@@ -672,7 +713,17 @@
           ${filtered.length ? filtered.map(recRow).join("") : `<div class="panel">${empty(I.coins, doMes.length ? "Nada com esse filtro" : "Nenhum recebimento neste mês", "Lance o que você espera receber (e de quem). Quando o dinheiro cair, é só clicar em “Recebi”.", doMes.length ? "" : `<button class="btn btn-gold" data-action="new-rec">${I.plus}Lançar recebimento</button>`)}</div>`}
         </div>
       </div>
-      <div class="stagger">
+      <div class="grid stagger" style="align-content:start">
+        <div class="panel">
+          <div class="panel-head"><h3 class="panel-title"><span class="dot"></span>Recebimentos fixos</h3>${fixos.length ? `<span class="panel-sub">${money(sum(fixos, f => f.valor))}/mês</span>` : ""}</div>
+          <div class="clients">
+            ${fixos.length ? fixos.map(f => `<div class="client-row" data-id="${f.id}">
+              <div class="top" style="align-items:center"><span style="flex:1">${esc(f.cliente)} <small style="color:var(--text-3)">· dia ${f.dia}</small></span><b>${money(f.valor)}</b>
+                <button class="icon-btn" data-action="edit-fixo" title="Editar">${I.edit}</button>
+                <button class="icon-btn" data-action="stop-fixo" title="Parar">${I.trash}</button>
+              </div></div>`).join("") : `<div style="color:var(--text-3);font-size:13px">Salário ou qualquer valor que entra todo mês. Lance em “Novo recebimento” e escolha repetir “todo mês”.</div>`}
+          </div>
+        </div>
         <div class="panel">
           <div class="panel-head"><h3 class="panel-title"><span class="dot"></span>Quem mais pagou em ${year}</h3><span class="panel-sub">${money(totalAno)}</span></div>
           <div class="clients">
@@ -699,6 +750,61 @@
     </div>`;
   }
 
+  // ---------- Saldo e reserva ----------
+  function renderReserva(mk) {
+    const s = saldos(mk);
+    if (!s) {
+      const antes = db.conta.inicio && mk < db.conta.inicio;
+      return `<div class="stagger"><div class="panel">${empty(I.wallet,
+        antes ? "Antes do saldo inicial" : "Informe seus saldos",
+        antes ? `Seus saldos começam a contar em ${esc(monthName(db.conta.inicio))}.` : "Diga quanto você tem hoje na conta corrente e na reserva. A partir daí o app acompanha os dois mês a mês.",
+        `<button class="btn btn-gold" data-action="edit-saldos">${I.wallet}${antes ? "Mudar mês inicial" : "Informar saldos"}</button>`)}</div></div>`;
+    }
+    const movs = db.reserva.movimentos.filter(m => monthOf(m.data) === mk).sort((a, b) => a.data.localeCompare(b.data));
+    const guardado = sum(movs.filter(m => m.tipo === "guardar"), m => m.valor) - sum(movs.filter(m => m.tipo === "resgatar"), m => m.valor);
+    const rendeu = sum(movs.filter(m => m.tipo === "rendimento"), m => m.valor);
+    const fimDo = mk === currentMonth() ? "hoje" : `fim de ${esc(monthName(mk))}`;
+
+    return `
+    <div class="summary-strip stagger">
+      <div class="panel"><div class="stat-label">Em conta · ${fimDo}</div><div class="stat-value" style="font-size:28px;color:${s.conta < 0 ? "var(--coral)" : "var(--text)"}" data-count="${s.conta}">${money(s.conta)}</div></div>
+      <div class="panel"><div class="stat-label">Reserva · ${fimDo}</div><div class="stat-value" style="font-size:28px;color:var(--gold-300)" data-count="${s.reserva}">${money(s.reserva)}</div></div>
+      <div class="panel"><div class="stat-label">Guardado no mês</div><div class="stat-value" style="color:${guardado < 0 ? "var(--coral)" : "var(--green-400)"}" data-count="${guardado}">${money(guardado)}</div></div>
+      <div class="panel"><div class="stat-label">Rendimento no mês</div><div class="stat-value" data-count="${rendeu}">${money(rendeu)}</div></div>
+    </div>
+    <div class="grid dash-main" style="margin-top:0">
+      <div>
+        <div class="toolbar">
+          <button class="btn btn-gold" data-action="new-mov" data-tipo="guardar">${I.arrowDown}Guardar</button>
+          <button class="btn btn-ghost" data-action="new-mov" data-tipo="resgatar">${I.arrowUp}Resgatar</button>
+          <button class="btn btn-ghost" data-action="new-mov" data-tipo="rendimento">${I.trendUp}Rendimento</button>
+        </div>
+        <div class="pay-list stagger">
+          ${movs.length ? movs.map(m => `<div class="inc-item ${m.tipo === "resgatar" ? "" : "received"}" data-id="${m.id}">
+            <div class="inc-icon">${MOV[m.tipo].icon}</div>
+            <div style="min-width:0"><div class="pay-name">${MOV[m.tipo].nome}</div><div class="pay-sub">${esc(m.descricao || "")}</div></div>
+            <div class="inc-date">${fmtDate(m.data)}</div>
+            <div class="inc-value">${MOV[m.tipo].sinal}${money(m.valor)}</div>
+            <div class="row-actions">
+              <button class="icon-btn" data-action="edit-mov" title="Editar">${I.edit}</button>
+              <button class="icon-btn" data-action="del-mov" title="Excluir">${I.trash}</button>
+            </div></div>`).join("") : `<div class="panel">${empty(I.wallet, "Nenhum movimento neste mês", "Quando guardar ou tirar dinheiro da reserva, registre aqui. O saldo da conta se ajusta sozinho.")}</div>`}
+        </div>
+      </div>
+      <div class="stagger">
+        <div class="panel">
+          <div class="panel-head"><h3 class="panel-title"><span class="dot"></span>Saldos iniciais</h3><span class="panel-sub">${esc(monthName(db.conta.inicio))}</span></div>
+          <div class="clients">
+            <div class="client-row"><div class="top"><span>Conta corrente</span><b>${money(db.conta.saldoInicial)}</b></div></div>
+            <div class="client-row"><div class="top"><span>Reserva</span><b>${money(db.reserva.saldoInicial)}</b></div></div>
+          </div>
+          <p style="color:var(--text-3);font-size:12.5px;margin:12px 0">A conta soma tudo que você marcou como recebido e tira tudo que marcou como pago, mês a mês.</p>
+          <button class="btn btn-ghost btn-sm" data-action="edit-saldos">${I.edit}Editar saldos</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
   // ---------- Ajustes ----------
   function renderAjustes() {
     return `<div class="settings stagger">
@@ -710,8 +816,8 @@
       <div class="panel">
         <div class="panel-head"><h3 class="panel-title"><span class="dot"></span>Onde seus dados ficam</h3></div>
         ${serverMode
-          ? `<p>Você está usando o servidor local. Tudo é salvo automaticamente em <code class="path">financas/data/dados.json</code>, com um backup diário em <code class="path">data/backups/</code>.</p>`
-          : `<p>Você abriu o arquivo direto no navegador, então os dados ficam guardados <b>neste navegador</b>. Para salvar em arquivo (mais seguro), rode <code class="path">node server.js</code> dentro da pasta <code class="path">financas</code> e abra <code class="path">http://localhost:3000</code>.</p>`}
+          ? `<p>Você está usando o servidor local. Tudo é salvo automaticamente em <code class="path">data/dados.json</code>, com um backup diário em <code class="path">data/backups/</code>.</p>`
+          : `<p>Você abriu o arquivo direto no navegador, então os dados ficam guardados <b>neste navegador</b>. Para salvar em arquivo (mais seguro), dê dois cliques em <code class="path">iniciar.bat</code> e abra <code class="path">http://localhost:3000</code>.</p>`}
         <p style="margin:0">Registros: ${db.pix.length} recorrentes · ${db.cartoes.length} cartões · ${db.recebimentos.length} recebimentos · ${db.avulsos.length} contas avulsas.</p>
       </div>
       <div class="panel">
@@ -877,13 +983,19 @@
         ${select("forma", "Como recebe", ["Pix", "Transferência", "Boleto", "Cartão", "Dinheiro", "Outro"], r.forma || "Pix")}
         ${edit ? field("recebidoEm", "Recebido em (vazio = ainda não)", r.recebidoEm || "", 'type="date"', true) : `
           <label class="toggle field full"><input type="checkbox" name="jaRecebido"><span class="sw"></span>Já caiu na conta (hoje)</label>
-          <div class="field full"><label for="f-repetir">Repetir nos próximos meses</label><select id="f-repetir" name="repetir">${[0, 1, 2, 3, 5, 11].map(n => `<option value="${n}">${n ? `mais ${n} ${n === 1 ? "mês" : "meses"} (${n + 1} parcelas)` : "não repetir"}</option>`).join("")}</select><span class="hint">Útil para clientes fixos ou pagamentos parcelados.</span></div>`}
+          <div class="field full"><label for="f-repetir">Repetir nos próximos meses</label><select id="f-repetir" name="repetir">${[0, 1, 2, 3, 5, 11].map(n => `<option value="${n}">${n ? `mais ${n} ${n === 1 ? "mês" : "meses"} (${n + 1} parcelas)` : "não repetir"}</option>`).join("")}<option value="fixo">todo mês (recebimento fixo, ex.: salário)</option></select><span class="hint">“Todo mês” para salário; parcelas para trabalhos pagos em partes.</span></div>`}
       </div>`,
       onSubmit(d, form) {
         if (!need(form, "cliente", "Informe o cliente.") || !need(form, "valor", "Informe o valor.") || !need(form, "previsto", "Informe a data prevista.")) return false;
         const base = { cliente: d.cliente.trim(), descricao: d.descricao.trim(), valor: parseMoney(d.valor), forma: d.forma };
         if (edit) {
           Object.assign(db.recebimentos.find(x => x.id === r.id), base, { previsto: d.previsto, recebidoEm: d.recebidoEm || null });
+        } else if (d.repetir === "fixo") {
+          const mk = monthOf(d.previsto);
+          const f = { id: uid(), ...base, dia: +d.previsto.slice(8, 10), inicio: mk, ativo: true, meses: [mk] };
+          db.recFixos.push(f);
+          db.recebimentos.push({ id: uid(), fixoId: f.id, ...base, previsto: d.previsto, recebidoEm: d.jaRecebido ? todayISO() : null });
+          if (d.jaRecebido) coinBurst();
         } else {
           const n = +d.repetir || 0;
           const day = +d.previsto.slice(8, 10);
@@ -916,12 +1028,82 @@
     if (btn) btn.onclick = () => { delete db.valoresMes[mk][p.id]; save(); render(); $(".modal-back:last-child [data-close]")?.click(); toast("Valor padrão restaurado."); };
   }
 
+  function fixoForm(f) {
+    openModal({
+      title: "Editar recebimento fixo",
+      sub: "Vale a partir deste mês, para o que ainda não foi recebido. Meses anteriores ficam como estão.",
+      body: `<div class="form">
+        ${field("cliente", "Cliente / fonte", f.cliente, "", true)}
+        ${field("valor", "Valor mensal (R$)", moneyInputValue(f.valor), 'inputmode="decimal"')}
+        ${field("dia", "Dia previsto", f.dia, 'type="number" min="1" max="31"')}
+        ${field("descricao", "Descrição", f.descricao, "", true)}
+        ${select("forma", "Como recebe", ["Pix", "Transferência", "Boleto", "Cartão", "Dinheiro", "Outro"], f.forma || "Pix", true)}
+      </div>`,
+      onSubmit(d, form) {
+        if (!need(form, "cliente", "Informe o cliente.") || !need(form, "valor", "Informe o valor.")) return false;
+        Object.assign(f, { cliente: d.cliente.trim(), descricao: d.descricao.trim(), valor: parseMoney(d.valor), forma: d.forma, dia: Math.min(31, Math.max(1, +d.dia || 1)) });
+        for (const r of db.recebimentos) {
+          if (r.fixoId !== f.id || r.recebidoEm || monthOf(r.previsto) < currentMonth()) continue;
+          Object.assign(r, { cliente: f.cliente, descricao: f.descricao, valor: f.valor, forma: f.forma, previsto: dateInMonth(monthOf(r.previsto), f.dia) });
+        }
+        save(); render(); toast("Recebimento fixo atualizado.");
+      },
+    });
+  }
+
+  function saldosForm() {
+    const c = db.conta;
+    openModal({
+      title: "Saldos iniciais",
+      sub: "Quanto você tinha no começo do mês escolhido. A partir daí o app soma o que entra e tira o que sai.",
+      body: `<div class="form">
+        ${field("inicio", "A partir do mês", c.inicio || currentMonth(), 'type="month"', true)}
+        ${field("conta", "Saldo na conta corrente (R$)", c.saldoInicial == null ? "" : moneyInputValue(c.saldoInicial), 'inputmode="decimal" placeholder="0,00"', false, "Pode ser negativo, ex.: -150,00")}
+        ${field("reserva", "Saldo da reserva / poupança (R$)", moneyInputValue(db.reserva.saldoInicial), 'inputmode="decimal" placeholder="0,00"')}
+      </div>`,
+      onSubmit(d, form) {
+        if (!need(form, "inicio", "Informe o mês.")) return false;
+        db.conta = { saldoInicial: parseMoney(d.conta), inicio: d.inicio };
+        db.reserva.saldoInicial = parseMoney(d.reserva);
+        save(); render(); toast("Saldos salvos.");
+      },
+    });
+  }
+
+  const MOV = {
+    guardar: { titulo: "Guardar na reserva", nome: "Guardei", icon: I.arrowDown, sinal: "+ " },
+    resgatar: { titulo: "Resgatar da reserva", nome: "Resgatei", icon: I.arrowUp, sinal: "− " },
+    rendimento: { titulo: "Rendimento da reserva", nome: "Rendimento", icon: I.trendUp, sinal: "+ " },
+  };
+
+  function movForm(tipo, m) {
+    const edit = !!m;
+    m = m || { tipo, valor: "", data: ui.month === currentMonth() ? todayISO() : dateInMonth(ui.month, 1), descricao: "" };
+    openModal({
+      title: edit ? "Editar movimento" : MOV[m.tipo].titulo,
+      sub: m.tipo === "rendimento" ? "Juros que a reserva rendeu. Não mexe no saldo da conta." : m.tipo === "guardar" ? "Sai da conta corrente e entra na reserva." : "Sai da reserva e volta para a conta corrente.",
+      body: `<div class="form">
+        ${field("valor", "Valor (R$)", moneyInputValue(m.valor), 'inputmode="decimal" placeholder="0,00"')}
+        ${field("data", "Data", m.data, 'type="date"')}
+        ${field("descricao", "Descrição", m.descricao, 'placeholder="Opcional"', true)}
+      </div>`,
+      onSubmit(d, form) {
+        if (!need(form, "valor", "Informe o valor.") || !need(form, "data", "Informe a data.")) return false;
+        const data = { valor: parseMoney(d.valor), data: d.data, descricao: d.descricao.trim() };
+        if (edit) Object.assign(m, data);
+        else db.reserva.movimentos.push({ id: uid(), tipo: m.tipo, ...data });
+        if (monthOf(data.data) !== ui.month) ui.month = monthOf(data.data);
+        save(); render(); toast("Movimento salvo.");
+      },
+    });
+  }
+
   function confirmModal(title, text, onYes, submit = "Excluir") {
     openModal({ title, sub: text, submit, danger: true, onSubmit() { onYes(); } });
   }
 
   function quickAdd() {
-    const map = { pix: () => pixForm(), cartoes: () => cardForm(), receitas: () => recForm() };
+    const map = { pix: () => pixForm(), cartoes: () => cardForm(), receitas: () => recForm(), reserva: () => movForm("guardar") };
     if (map[ui.view]) return map[ui.view]();
     const { back, close } = openModal({
       title: "O que você quer lançar?",
@@ -956,6 +1138,17 @@
       case "edit-card": return cardForm(db.cartoes.find(x => x.id === id));
       case "edit-rec": return recForm(db.recebimentos.find(x => x.id === id));
       case "month-value": return monthValueForm(db.pix.find(x => x.id === id));
+      case "edit-fixo": return fixoForm(db.recFixos.find(x => x.id === id));
+      case "stop-fixo": {
+        const f = db.recFixos.find(x => x.id === id);
+        return confirmModal(`Parar o recebimento fixo de ${esc(f.cliente)}?`, "Ele deixa de aparecer nos próximos meses. O que já foi lançado continua.", () => {
+          f.ativo = false; save(); render(); toast("Recebimento fixo parado.");
+        }, "Parar");
+      }
+      case "edit-saldos": return saldosForm();
+      case "new-mov": return movForm(el.dataset.tipo);
+      case "edit-mov": return movForm(null, db.reserva.movimentos.find(x => x.id === id));
+      case "del-mov": return confirmModal("Excluir movimento?", "Essa ação não pode ser desfeita.", () => { db.reserva.movimentos = db.reserva.movimentos.filter(x => x.id !== id); save(); render(); });
 
       case "toggle-pix": {
         const p = db.pix.find(x => x.id === id);
@@ -1323,7 +1516,7 @@
       if (e.key === "ArrowLeft") changeMonth(-1);
       if (e.key === "ArrowRight") changeMonth(1);
       if (e.key.toLowerCase() === "n") { e.preventDefault(); quickAdd(); }
-      const k = { 1: "painel", 2: "pix", 3: "cartoes", 4: "receitas", 5: "ajustes" }[e.key];
+      const k = { 1: "painel", 2: "pix", 3: "cartoes", 4: "receitas", 5: "reserva", 6: "ajustes" }[e.key];
       if (k) go(k);
     });
 

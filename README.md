@@ -4,7 +4,8 @@ App local para controlar:
 
 - **Pagamentos do mês**: checklist de todo mundo que você paga (Pix, boleto, etc.), com chave Pix pra copiar num clique, dia de pagamento e progresso do mês. Tem um botão que copia a lista de pendentes com as chaves.
 - **Cartões de crédito**: cada cartão com fechamento, vencimento e limite. Todo mês você digita o valor da fatura e marca como paga.
-- **Recebimentos**: quanto você espera receber, de quem e quando. Clique em "Recebi" quando o dinheiro cair. Pode repetir um recebimento por vários meses.
+- **Recebimentos**: quanto você espera receber, de quem e quando. Clique em "Recebi" quando o dinheiro cair. Pode repetir um recebimento por vários meses, ou marcar como fixo (todo mês, ex.: salário).
+- **Saldo e reserva**: informe quanto tem na conta e na reserva uma vez; o app acompanha os dois mês a mês. Registre quando guardar, resgatar ou a reserva render.
 - **Painel**: saldo do mês, quanto entrou, quanto saiu, o que falta pagar, agenda com os vencimentos e gráfico dos últimos 6 meses.
 
 ## Como rodar
@@ -33,7 +34,7 @@ Os dados ficam salvos em `data/dados.json`, com um backup automático por dia em
 |---|---|
 | `←` / `→` | mês anterior / próximo |
 | `N` | novo lançamento |
-| `1`–`5` | trocar de tela |
+| `1`–`6` | trocar de tela |
 
 ## Dicas
 

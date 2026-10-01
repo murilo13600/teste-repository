@@ -669,7 +669,7 @@ code.path { font-family: var(--mono); font-size: 12px; background: rgba(0,0,0,.3
   .cards-grid { grid-template-columns: 1fr; }
   .form { grid-template-columns: 1fr; }
   .bottom-nav {
-    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 50; display: grid; grid-template-columns: repeat(5, 1fr);
+    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 50; display: grid; grid-template-columns: repeat(6, 1fr);
     padding: 6px; border-radius: 22px; background: rgba(8,16,36,.88); border: 1px solid var(--stroke);
     backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 20px 50px -10px rgba(0,0,0,.8);
     padding-bottom: max(6px, env(safe-area-inset-bottom));
