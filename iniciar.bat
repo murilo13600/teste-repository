@@ -9,5 +9,5 @@ if errorlevel 1 (
   pause
   exit /b
 )
-start "" http://localhost:3000
+start "" /b cmd /c "ping -n 2 127.0.0.1 >nul & start "" http://localhost:3000"
 node server.js
