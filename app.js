@@ -914,26 +914,43 @@
   function avulsoForm(a) {
     const edit = !!a;
     a = a || { descricao: "", valor: "", vencimento: dateInMonth(ui.month, ui.month === currentMonth() ? new Date().getDate() : 10), categoria: "" };
-    openModal({
+    const { form } = openModal({
       title: edit ? "Editar conta avulsa" : "Nova conta avulsa",
-      sub: "Um gasto que acontece só uma vez (ou de vez em quando).",
+      sub: "Um gasto que acontece só uma vez (ou de vez em quando), à vista ou parcelado.",
       body: `<div class="form">
         ${field("descricao", "Descrição", a.descricao, 'placeholder="Ex.: IPVA, conserto do carro"', true)}
         ${field("valor", "Valor (R$)", moneyInputValue(a.valor), 'inputmode="decimal" placeholder="0,00"')}
-        ${field("vencimento", "Vencimento", a.vencimento, 'type="date"')}
+        ${field("vencimento", edit ? "Vencimento" : "Vencimento (1ª parcela)", a.vencimento, 'type="date"')}
+        ${edit ? "" : `<div class="field full"><label for="f-parcelas">Parcelas</label><select id="f-parcelas" name="parcelas">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i ? `${i + 1}x (uma por mês)` : "à vista"}</option>`).join("")}</select><span class="hint" id="parc-total"></span></div>`}
         ${field("categoria", "Categoria", a.categoria, 'list="dl-cat2" placeholder="Opcional"', true)}
         ${datalist("dl-cat2", ["Impostos", "Carro", "Saúde", "Casa", "Educação", "Lazer", ...db.avulsos.map(x => x.categoria)])}
-        ${edit ? "" : `<label class="toggle field full"><input type="checkbox" name="jaPago"><span class="sw"></span>Já está paga</label>`}
+        ${edit ? "" : `<label class="toggle field full"><input type="checkbox" name="jaPago"><span class="sw"></span>Já está paga (só a 1ª parcela, se parcelado)</label>`}
       </div>`,
       onSubmit(d, form) {
         if (!need(form, "descricao", "Informe a descrição.") || !need(form, "valor", "Informe o valor.") || !need(form, "vencimento", "Informe o vencimento.")) return false;
         const data = { descricao: d.descricao.trim(), valor: parseMoney(d.valor), vencimento: d.vencimento, categoria: d.categoria.trim() };
         if (edit) Object.assign(db.avulsos.find(x => x.id === a.id), data);
-        else db.avulsos.push({ id: uid(), pagoEm: d.jaPago ? todayISO() : null, ...data });
+        else {
+          const n = +d.parcelas || 1;
+          const day = +d.vencimento.slice(8, 10);
+          for (let i = 0; i < n; i++) {
+            db.avulsos.push({ id: uid(), pagoEm: i === 0 && d.jaPago ? todayISO() : null, ...data,
+              descricao: n > 1 ? `${data.descricao} · ${i + 1}/${n}` : data.descricao,
+              vencimento: dateInMonth(addMonths(monthOf(d.vencimento), i), day) });
+          }
+        }
         if (monthOf(data.vencimento) !== ui.month) ui.month = monthOf(data.vencimento);
-        save(); render(); toast("Conta salva.");
+        save(); render(); toast(+d.parcelas > 1 ? `${d.parcelas} parcelas lançadas.` : "Conta salva.");
       },
     });
+    if (edit) return;
+    const syncParcelas = () => {
+      const n = +form.elements.parcelas.value;
+      $("label[for=f-valor]", form).textContent = n > 1 ? "Valor de cada parcela (R$)" : "Valor (R$)";
+      $("#parc-total", form).textContent = n > 1 ? `${n}x de ${money(parseMoney(form.elements.valor.value))} = ${money(n * parseMoney(form.elements.valor.value))}` : "";
+    };
+    form.elements.parcelas.addEventListener("change", syncParcelas);
+    form.elements.valor.addEventListener("input", syncParcelas);
   }
 
   function cardForm(c) {
