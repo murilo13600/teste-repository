@@ -1,5 +1,5 @@
 @echo off
-title Aurum Financas
+title Financas em Dia
 cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (

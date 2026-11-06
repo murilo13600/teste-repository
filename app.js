@@ -1,5 +1,5 @@
 /* =========================================================
-   AURUM — Finanças pessoais
+   Finanças em Dia
    Tudo roda no navegador. Se aberto via `node server.js`,
    os dados são salvos em data/dados.json; senão, no navegador.
    ========================================================= */
@@ -77,7 +77,7 @@
   // ---------- Dados ----------
   const EMPTY = () => ({
     version: 1,
-    settings: { nome: "" },
+    settings: { nome: "", tema: "noite" },
     pix: [],          // pagamentos recorrentes (pessoas, contas fixas)
     pagamentos: {},   // { "AAAA-MM": { idPix: { valor, data } } }
     valoresMes: {},   // { "AAAA-MM": { idPix: valor } } ajuste só daquele mês
@@ -88,9 +88,33 @@
     recFixos: [],     // recebimentos de todo mês: { id, cliente, descricao, valor, dia, forma, inicio, ativo, meses: ["AAAA-MM"] }
     conta: { saldoInicial: null, inicio: null },  // saldo da conta no começo do mês `inicio`
     reserva: { saldoInicial: 0, movimentos: [] }, // movimentos: { id, tipo: guardar|resgatar|rendimento, valor, data, descricao }
+    ajustesConta: [], // atualizações do saldo real: { id, data, valor (+ rendimento, − ajuste), saldoInformado }
   });
 
   let db = EMPTY();
+
+  // Temas (cores em styles.css). Bolinhas: [fundo, destaque]
+  const TEMAS = {
+    noite: { nome: "Noite", cores: ["#0a1630", "#d4a843"] },
+    grafite: { nome: "Grafite", cores: ["#181a1f", "#4a98e6"] },
+    floresta: { nome: "Floresta", cores: ["#0f2018", "#a8bd42"] },
+    ameixa: { nome: "Ameixa", cores: ["#1b132a", "#e56f9c"] },
+    claro: { nome: "Claro", cores: ["#ffffff", "#0f766e"] },
+  };
+  let accentRGB = "212,168,67";
+
+  function applyTema() {
+    const tema = TEMAS[db.settings.tema] ? db.settings.tema : "noite";
+    const root = document.documentElement;
+    if (root.dataset.theme !== tema || !applyTema.pronto) {
+      root.dataset.theme = tema;
+      const cs = getComputedStyle(root);
+      accentRGB = cs.getPropertyValue("--gold-rgb").trim();
+      $('meta[name="theme-color"]').content = cs.getPropertyValue("--navy-950").trim();
+      applyTema.pronto = true;
+    }
+    try { localStorage.setItem("financas-tema", tema); } catch { /* armazenamento indisponível */ }
+  }
   let serverMode = false;
   let saveTimer = null;
   const LS_KEY = "aurum-financas-v1";
@@ -188,8 +212,13 @@
       else if (mv.tipo === "resgatar") { conta += mv.valor; reserva -= mv.valor; }
       else reserva += mv.valor;
     }
+    for (const a of db.ajustesConta) {
+      const m = monthOf(a.data);
+      if (m >= inicio && m <= mk) conta += a.valor;
+    }
     return { conta, reserva };
   }
+  const reservaEmUso = () => db.reserva.saldoInicial !== 0 || db.reserva.movimentos.length > 0;
 
   // Recebimentos fixos: cria o lançamento do mês na primeira vez que o mês é aberto
   function gerarFixos(mk) {
@@ -257,13 +286,14 @@
   }
 
   function render(enter = false) {
+    applyTema();
     gerarFixos(ui.month);
     gerarFixos(currentMonth());
     const v = $("#view");
     $("#view-title").textContent = VIEWS[ui.view].title;
     $$(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.view === ui.view));
     const ml = $("#month-label");
-    ml.textContent = monthName(ui.month);
+    ml.innerHTML = `<span class="m-long">${monthName(ui.month)}</span><span class="m-short">${MONTHS_SHORT[+ui.month.slice(5, 7) - 1]} ${ui.month.slice(0, 4)}</span>`;
     ml.classList.toggle("not-current", ui.month !== currentMonth());
     $("#month-switch").style.visibility = ui.view === "ajustes" ? "hidden" : "";
     $("#quick-add").style.visibility = ui.view === "ajustes" ? "hidden" : "";
@@ -348,7 +378,7 @@
         <div class="panel hero" style="grid-template-columns:1fr">
           <div>
             <div class="hero-label">bem-vindo ao</div>
-            <div class="hero-value gold-text" style="letter-spacing:.2em">AURUM</div>
+            <div class="hero-value gold-text">Finanças em Dia</div>
             <p style="color:var(--text-2);max-width:620px;margin:0 0 20px">Seu painel para nunca mais esquecer um Pix, acompanhar as faturas dos cartões e saber exatamente quanto entrou no mês. Comece cadastrando quem você paga todo mês.</p>
             <div class="btn-row">
               <button class="btn btn-gold" data-action="new-pix">${I.plus}Cadastrar pagamentos</button>
@@ -365,7 +395,7 @@
     const late = ag.filter(i => !i.done && i.dir === "out" && daysUntil(i.date) < 0).length;
     const s = saldos(mk);
     const saldoMeta = s
-      ? `<span>Em conta <b>${money(s.conta)}</b></span><span>Reserva <b>${money(s.reserva)}</b></span>`
+      ? `<span>Em conta <b>${money(s.conta)}</b></span>${reservaEmUso() ? `<span>Reserva <b>${money(s.reserva)}</b></span>` : ""}`
       : db.conta.inicio ? "" : `<span><button class="btn btn-ghost btn-sm" data-action="edit-saldos">${I.wallet}Informar saldo da conta</button></span>`;
 
     return `
@@ -382,8 +412,8 @@
           ${saldoMeta ? `<div class="hero-meta" style="margin-top:10px">${saldoMeta}</div>` : ""}
         </div>
         <div class="hero-rings">
-          ${ring(pctPix, "pix pagos", `${t.pixPagos}/${t.pixCount}`, "#3ee0a0")}
-          ${ring(pctCC, "faturas", `${t.ccPagos}/${t.ccCount}`, "#e2bb5a")}
+          ${ring(pctPix, "pix pagos", `${t.pixPagos}/${t.pixCount}`, "var(--green-400)")}
+          ${ring(pctCC, "faturas", `${t.ccPagos}/${t.ccCount}`, "var(--gold-400)")}
         </div>
       </div>
     </div>
@@ -400,7 +430,7 @@
             <h3 class="panel-title"><span class="dot"></span>Entradas × saídas pagas</h3>
             <div class="legend">
               <span><i style="background:var(--chart-in)"></i>Entradas</span>
-              <span><i style="background:repeating-linear-gradient(135deg,var(--chart-out) 0 3px,#8a6420 3px 5px)"></i>Saídas</span>
+              <span><i style="background:repeating-linear-gradient(135deg,var(--chart-out) 0 3px,var(--chart-out-dark) 3px 5px)"></i>Saídas</span>
             </div>
           </div>
           ${barChart(mk)}
@@ -444,7 +474,7 @@
     const bw = Math.min(26, cw / 3.2);
     const y = v => T + (H - T - B) * (1 - v / top);
     let s = `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico de entradas e saídas dos últimos 6 meses">
-      <defs><pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" fill="var(--chart-out)"/><rect width="1.6" height="5" fill="#8a6420"/></pattern></defs>`;
+      <defs><pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" fill="var(--chart-out)"/><rect width="1.6" height="5" fill="var(--chart-out-dark)"/></pattern></defs>`;
     for (let v = 0; v <= top + 1e-6; v += step) {
       s += `<line class="gridline" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis-label" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${moneyShort(v).replace("R$ ", "")}</text>`;
     }
@@ -477,9 +507,9 @@
 
   function donut(t) {
     const parts = [
-      { label: "Pagamentos recorrentes", v: t.pagosPix + t.pendPix, c: "#bd8a2e" },
+      { label: "Pagamentos recorrentes", v: t.pagosPix + t.pendPix, c: "var(--chart-out)" },
       { label: "Faturas de cartão", v: t.pagosCC + t.pendCC, c: "#4d7fd6" },
-      { label: "Contas avulsas", v: t.pagosAv + t.pendAv, c: "#20a070" },
+      { label: "Contas avulsas", v: t.pagosAv + t.pendAv, c: "var(--chart-in)" },
     ];
     const total = sum(parts, p => p.v);
     const r = 60, C = 2 * Math.PI * r, gap = total ? 3 : 0;
@@ -491,7 +521,7 @@
       return seg;
     }).join("");
     return `<div class="donut-wrap">
-      <div class="donut"><svg viewBox="0 0 150 150"><circle cx="75" cy="75" r="${r}" stroke="rgba(255,255,255,.06)"/>${segs}</svg>
+      <div class="donut"><svg viewBox="0 0 150 150"><circle cx="75" cy="75" r="${r}" stroke="rgba(var(--ink-rgb),.06)"/>${segs}</svg>
         <div class="donut-center"><span>total</span><b>${moneyShort(total)}</b></div></div>
       <div class="donut-legend">${parts.map(p => `<div><i style="background:${p.c}"></i><span>${p.label}</span><b>${money(p.v)}</b></div>`).join("")}</div>
     </div>`;
@@ -764,20 +794,35 @@
     const guardado = sum(movs.filter(m => m.tipo === "guardar"), m => m.valor) - sum(movs.filter(m => m.tipo === "resgatar"), m => m.valor);
     const rendeu = sum(movs.filter(m => m.tipo === "rendimento"), m => m.valor);
     const fimDo = mk === currentMonth() ? "hoje" : `fim de ${esc(monthName(mk))}`;
+    const ajustes = db.ajustesConta.filter(a => monthOf(a.data) === mk).sort((a, b) => a.data.localeCompare(b.data));
+    const rendeuConta = sum(ajustes.filter(a => a.valor > 0), a => a.valor);
+    const usaReserva = reservaEmUso();
 
     return `
-    <div class="summary-strip stagger">
+    <div class="summary-strip ${usaReserva ? "" : "two"} stagger">
       <div class="panel"><div class="stat-label">Em conta · ${fimDo}</div><div class="stat-value" style="font-size:28px;color:${s.conta < 0 ? "var(--coral)" : "var(--text)"}" data-count="${s.conta}">${money(s.conta)}</div></div>
-      <div class="panel"><div class="stat-label">Reserva · ${fimDo}</div><div class="stat-value" style="font-size:28px;color:var(--gold-300)" data-count="${s.reserva}">${money(s.reserva)}</div></div>
-      <div class="panel"><div class="stat-label">Guardado no mês</div><div class="stat-value" style="color:${guardado < 0 ? "var(--coral)" : "var(--green-400)"}" data-count="${guardado}">${money(guardado)}</div></div>
-      <div class="panel"><div class="stat-label">Rendimento no mês</div><div class="stat-value" data-count="${rendeu}">${money(rendeu)}</div></div>
+      <div class="panel"><div class="stat-label">Rendeu na conta no mês</div><div class="stat-value" style="color:var(--green-400)" data-count="${rendeuConta}">${money(rendeuConta)}</div></div>
+      ${usaReserva ? `<div class="panel"><div class="stat-label">Reserva · ${fimDo}</div><div class="stat-value" style="color:var(--gold-300)" data-count="${s.reserva}">${money(s.reserva)}</div></div>
+      <div class="panel"><div class="stat-label">Guardado no mês · rendeu ${money(rendeu)}</div><div class="stat-value" style="color:${guardado < 0 ? "var(--coral)" : "var(--green-400)"}" data-count="${guardado}">${money(guardado)}</div></div>` : ""}
     </div>
     <div class="grid dash-main" style="margin-top:0">
       <div>
         <div class="toolbar">
-          <button class="btn btn-gold" data-action="new-mov" data-tipo="guardar">${I.arrowDown}Guardar</button>
-          <button class="btn btn-ghost" data-action="new-mov" data-tipo="resgatar">${I.arrowUp}Resgatar</button>
-          <button class="btn btn-ghost" data-action="new-mov" data-tipo="rendimento">${I.trendUp}Rendimento</button>
+          <button class="btn btn-gold" data-action="atualizar-saldo">${I.wallet}Atualizar saldo</button>
+        </div>
+        <div class="pay-list stagger">
+          ${ajustes.length ? ajustes.map(a => `<div class="inc-item ${a.valor > 0 ? "received" : ""}" data-id="${a.id}">
+            <div class="inc-icon">${a.valor > 0 ? I.trendUp : I.alert}</div>
+            <div style="min-width:0"><div class="pay-name">${a.valor > 0 ? "Rendimento" : "Ajuste"}</div><div class="pay-sub">saldo informado ${money(a.saldoInformado)}</div></div>
+            <div class="inc-date">${fmtDate(a.data)}</div>
+            <div class="inc-value">${a.valor > 0 ? "+ " : ""}${money(a.valor)}</div>
+            <div class="row-actions"><button class="icon-btn" data-action="del-ajuste" title="Excluir">${I.trash}</button></div></div>`).join("") : `<div class="panel">${empty(I.trendUp, "Nenhuma atualização neste mês", "Digite o saldo que aparece no seu banco. O app compara com o que ele calculou e lança a diferença como rendimento.")}</div>`}
+        </div>
+        <div class="section-title"><h2>Reserva <small>dinheiro guardado à parte</small></h2></div>
+        <div class="toolbar">
+          <button class="btn btn-ghost btn-sm" data-action="new-mov" data-tipo="guardar">${I.arrowDown}Guardar</button>
+          <button class="btn btn-ghost btn-sm" data-action="new-mov" data-tipo="resgatar">${I.arrowUp}Resgatar</button>
+          <button class="btn btn-ghost btn-sm" data-action="new-mov" data-tipo="rendimento">${I.trendUp}Rendimento da reserva</button>
         </div>
         <div class="pay-list stagger">
           ${movs.length ? movs.map(m => `<div class="inc-item ${m.tipo === "resgatar" ? "" : "received"}" data-id="${m.id}">
@@ -788,7 +833,7 @@
             <div class="row-actions">
               <button class="icon-btn" data-action="edit-mov" title="Editar">${I.edit}</button>
               <button class="icon-btn" data-action="del-mov" title="Excluir">${I.trash}</button>
-            </div></div>`).join("") : `<div class="panel">${empty(I.wallet, "Nenhum movimento neste mês", "Quando guardar ou tirar dinheiro da reserva, registre aqui. O saldo da conta se ajusta sozinho.")}</div>`}
+            </div></div>`).join("") : ""}
         </div>
       </div>
       <div class="stagger">
@@ -798,7 +843,7 @@
             <div class="client-row"><div class="top"><span>Conta corrente</span><b>${money(db.conta.saldoInicial)}</b></div></div>
             <div class="client-row"><div class="top"><span>Reserva</span><b>${money(db.reserva.saldoInicial)}</b></div></div>
           </div>
-          <p style="color:var(--text-3);font-size:12.5px;margin:12px 0">A conta soma tudo que você marcou como recebido e tira tudo que marcou como pago, mês a mês.</p>
+          <p style="color:var(--text-3);font-size:12.5px;margin:12px 0">A conta soma tudo que você marcou como recebido, tira tudo que marcou como pago e inclui as atualizações de saldo.</p>
           <button class="btn btn-ghost btn-sm" data-action="edit-saldos">${I.edit}Editar saldos</button>
         </div>
       </div>
@@ -812,6 +857,13 @@
         <div class="panel-head"><h3 class="panel-title"><span class="dot"></span>Perfil</h3></div>
         <p>Como devo te chamar na saudação?</p>
         <div class="field"><input id="set-nome" placeholder="Seu nome" value="${esc(db.settings.nome)}"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3 class="panel-title"><span class="dot"></span>Aparência</h3></div>
+        <p>Escolha o tema do app. Muda só as cores, seus dados continuam iguais.</p>
+        <div class="btn-row">
+          ${Object.entries(TEMAS).map(([k, t]) => `<button class="btn ${(db.settings.tema || "noite") === k ? "btn-gold" : "btn-ghost"}" data-action="set-tema" data-tema="${k}" aria-pressed="${(db.settings.tema || "noite") === k}"><span style="width:16px;height:16px;border-radius:50%;flex:none;background:linear-gradient(135deg,${t.cores[0]} 50%,${t.cores[1]} 50%);box-shadow:0 0 0 1px rgba(var(--ink-rgb),.3)"></span>${t.nome}</button>`).join("")}
+        </div>
       </div>
       <div class="panel">
         <div class="panel-head"><h3 class="panel-title"><span class="dot"></span>Onde seus dados ficam</h3></div>
@@ -953,6 +1005,29 @@
     form.elements.valor.addEventListener("input", syncParcelas);
   }
 
+  // Gasto do dia a dia (débito, Pix, dinheiro): vira uma conta avulsa já paga
+  function gastoForm() {
+    openModal({
+      title: "Novo gasto",
+      sub: "Compra no débito, Pix ou dinheiro. O valor já sai do saldo em conta.",
+      submit: "Lançar gasto",
+      body: `<div class="form">
+        ${field("valor", "Valor (R$)", "", 'inputmode="decimal" placeholder="0,00" autocomplete="off"')}
+        ${field("data", "Data", todayISO(), 'type="date"')}
+        ${field("descricao", "Descrição", "", 'placeholder="Ex.: mercado, gasolina, farmácia" autocomplete="off"', true)}
+        ${field("categoria", "Categoria", "", 'list="dl-cat3" placeholder="Opcional"', true)}
+        ${datalist("dl-cat3", ["Mercado", "Transporte", "Saúde", "Casa", "Lazer", ...db.avulsos.map(x => x.categoria)])}
+      </div>`,
+      onSubmit(d, form) {
+        if (!need(form, "valor", "Informe o valor.") || !need(form, "descricao", "Informe a descrição.") || !need(form, "data", "Informe a data.")) return false;
+        const valor = parseMoney(d.valor);
+        db.avulsos.push({ id: uid(), descricao: d.descricao.trim(), valor, vencimento: d.data, categoria: d.categoria.trim(), pagoEm: d.data });
+        save(); render();
+        toast(monthOf(d.data) === ui.month ? `Gasto de ${money(valor)} lançado.` : `Gasto de ${money(valor)} lançado em ${monthName(monthOf(d.data))}.`);
+      },
+    });
+  }
+
   function cardForm(c) {
     const edit = !!c;
     c = c || { nome: "", apelido: "", final: "", bandeira: "Mastercard", fechamento: 1, vencimento: 10, cor: "navy", limite: "" };
@@ -1087,6 +1162,52 @@
     });
   }
 
+  function atualizarSaldoForm() {
+    const mk = currentMonth();
+    const s = saldos(mk);
+    if (!s) return toast("Informe o saldo inicial antes.", "warn");
+    const lista = itens => `<div style="max-height:130px;overflow:auto;margin-top:8px">${itens.map(([n, v]) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0"><span>${esc(n)}</span><b style="font-family:var(--mono);font-weight:500">${money(v)}</b></div>`).join("")}</div>`;
+    const diferenca = v => Math.round((v - s.conta) * 100) / 100;
+    const { form } = openModal({
+      title: "Atualizar saldo",
+      sub: "Digite o saldo que aparece agora no seu banco.",
+      body: `<div class="form">
+        ${field("saldo", "Saldo real na conta (R$)", "", 'inputmode="decimal" placeholder="0,00" autocomplete="off"', true)}
+        <div class="field full"><div id="saldo-preview" style="font-size:13px;color:var(--text-2)">O app calcula <b>${money(s.conta)}</b> hoje.</div></div>
+      </div>`,
+      onSubmit(d, f) {
+        if (!String(d.saldo).trim()) { f.elements.saldo.focus(); toast("Informe o saldo.", "warn"); return false; }
+        const real = parseMoney(d.saldo);
+        const valor = diferenca(real);
+        if (!valor) { toast("O saldo já está certo."); return; }
+        db.ajustesConta.push({ id: uid(), data: todayISO(), valor, saldoInformado: real });
+        ui.month = mk;
+        save(); render();
+        toast(valor > 0 ? `+ ${money(valor)} de rendimento lançado.` : "Ajuste lançado.");
+      },
+    });
+    const btn = $("button[type=submit]", form);
+    form.elements.saldo.addEventListener("input", () => {
+      const box = $("#saldo-preview", form);
+      const texto = form.elements.saldo.value.trim();
+      btn.textContent = "Salvar";
+      if (!texto) { box.innerHTML = `O app calcula <b>${money(s.conta)}</b> hoje.`; return; }
+      const real = parseMoney(texto);
+      const valor = diferenca(real);
+      const compara = `O app calcula <b>${money(s.conta)}</b>, você informou <b>${money(real)}</b>.`;
+      if (!valor) { box.innerHTML = `${compara}<br>O saldo já está certo.`; return; }
+      if (valor > 0) {
+        const naoMarcados = db.recebimentos.filter(r => !r.recebidoEm && daysUntil(r.previsto) <= 0);
+        btn.textContent = "Salvar rendimento";
+        box.innerHTML = `${compara}<br><b style="color:var(--green-400)">+ ${money(valor)}</b> entra como rendimento.${naoMarcados.length ? `<br><br>Antes de salvar, confira: estes recebimentos já venceram e não estão marcados. Se algum caiu na conta, marque “Recebi” para ele não virar rendimento.${lista(naoMarcados.map(r => [r.cliente, r.valor]))}` : ""}`;
+        return;
+      }
+      const pendentes = agenda(mk).filter(i => !i.done && i.dir === "out" && i.value > 0);
+      btn.textContent = "Salvar como ajuste";
+      box.innerHTML = `${compara}<br><b style="color:var(--coral)">${money(valor)}</b> de diferença: provavelmente falta marcar algum pagamento ou lançar algum gasto.${pendentes.length ? `<br><br>Pendentes de ${esc(monthName(mk))}:${lista(pendentes.map(i => [i.name, i.value]))}` : ""}`;
+    });
+  }
+
   const MOV = {
     guardar: { titulo: "Guardar na reserva", nome: "Guardei", icon: I.arrowDown, sinal: "+ " },
     resgatar: { titulo: "Resgatar da reserva", nome: "Resgatei", icon: I.arrowUp, sinal: "− " },
@@ -1120,14 +1241,14 @@
   }
 
   function quickAdd() {
-    const map = { pix: () => pixForm(), cartoes: () => cardForm(), receitas: () => recForm(), reserva: () => movForm("guardar") };
+    const map = { pix: () => pixForm(), cartoes: () => cardForm(), receitas: () => recForm(), reserva: () => atualizarSaldoForm() };
     if (map[ui.view]) return map[ui.view]();
     const { back, close } = openModal({
       title: "O que você quer lançar?",
       sub: "Escolha o tipo de registro.",
       body: `<div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
         ${[["pix", I.user, "Pagamento recorrente", "Pix de todo mês"], ["avulso", I.receipt, "Conta avulsa", "Gasto único"], ["card", I.card, "Cartão de crédito", "Novo cartão"], ["rec", I.coins, "Recebimento", "Dinheiro entrando"]]
-          .map(([k, ic, t, s]) => `<button type="button" class="panel" data-q="${k}" style="text-align:left;padding:16px;cursor:pointer"><div class="kpi-icon" style="background:rgba(212,168,67,.12);color:var(--gold-300);margin-bottom:10px">${ic}</div><b style="display:block;font-size:14px">${t}</b><span style="font-size:12px;color:var(--text-3)">${s}</span></button>`).join("")}
+          .map(([k, ic, t, s]) => `<button type="button" class="panel" data-q="${k}" style="text-align:left;padding:16px;cursor:pointer"><div class="kpi-icon" style="background:rgba(var(--gold-rgb),.12);color:var(--gold-300);margin-bottom:10px">${ic}</div><b style="display:block;font-size:14px">${t}</b><span style="font-size:12px;color:var(--text-3)">${s}</span></button>`).join("")}
       </div>`,
       submit: "Fechar",
       onSubmit() {},
@@ -1163,6 +1284,9 @@
         }, "Parar");
       }
       case "edit-saldos": return saldosForm();
+      case "set-tema": db.settings.tema = el.dataset.tema; save(); render(); return;
+      case "atualizar-saldo": return atualizarSaldoForm();
+      case "del-ajuste": return confirmModal("Excluir atualização?", "O saldo em conta volta a ser calculado sem ela.", () => { db.ajustesConta = db.ajustesConta.filter(x => x.id !== id); save(); render(); });
       case "new-mov": return movForm(el.dataset.tipo);
       case "edit-mov": return movForm(null, db.reserva.movimentos.find(x => x.id === id));
       case "del-mov": return confirmModal("Excluir movimento?", "Essa ação não pode ser desfeita.", () => { db.reserva.movimentos = db.reserva.movimentos.filter(x => x.id !== id); save(); render(); });
@@ -1250,7 +1374,7 @@
         const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `aurum-backup-${todayISO()}.json`;
+        a.download = `financas-em-dia-backup-${todayISO()}.json`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
         return toast("Backup exportado.");
@@ -1321,7 +1445,7 @@
   function particles() {
     const cv = $("#particles"), ctx = cv.getContext("2d");
     let W, H, pts = [], mouse = { x: -999, y: -999 }, raf;
-    const colors = ["212,168,67", "62,224,160", "232,220,196", "120,160,255"];
+    const colors = ["accent", "62,224,160", "232,220,196", "120,160,255"];
     const resize = () => {
       const dpr = Math.min(2, devicePixelRatio || 1);
       W = innerWidth; H = innerHeight;
@@ -1342,11 +1466,12 @@
       for (let i = 0; i < pts.length; i++) {
         for (let j = i + 1; j < pts.length; j++) {
           const a = pts[i], b = pts[j], d = Math.hypot(a.x - b.x, a.y - b.y);
-          if (d < 130) { ctx.strokeStyle = `rgba(212,168,67,${.14 * (1 - d / 130)})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+          if (d < 130) { ctx.strokeStyle = `rgba(${accentRGB},${.14 * (1 - d / 130)})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
         }
       }
       for (const p of pts) {
-        ctx.fillStyle = `rgba(${p.c},.75)`; ctx.shadowColor = `rgba(${p.c},.9)`; ctx.shadowBlur = 8;
+        const c = p.c === "accent" ? accentRGB : p.c;
+        ctx.fillStyle = `rgba(${c},.75)`; ctx.shadowColor = `rgba(${c},.9)`; ctx.shadowBlur = 8;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
       }
       ctx.shadowBlur = 0;
@@ -1543,6 +1668,7 @@
       if (e.target.closest("#month-label")) { ui.month = currentMonth(); render(true); }
     });
     $("#quick-add").addEventListener("click", quickAdd);
+    $("#quick-gasto").addEventListener("click", () => gastoForm());
 
     // Holofote dos painéis, brilho do cursor e inclinação 3D dos cartões
     const glow = $(".cursor-glow");
@@ -1602,6 +1728,7 @@
     buildBottomNav();
     bind();
     await load();
+    applyTema();
     updateStoragePill();
     greet();
     clock(); setInterval(clock, 1000);

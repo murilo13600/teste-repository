@@ -81,7 +81,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log("");
-  console.log("  ✦ Aurum Finanças rodando em  http://localhost:" + PORT);
+  console.log("  ✦ Finanças em Dia rodando em  http://localhost:" + PORT);
   console.log("  ✦ Seus dados ficam em        " + DATA_FILE);
   console.log("  ✦ Para parar: Ctrl + C");
   console.log("");
