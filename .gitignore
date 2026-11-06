@@ -1,1 +1,4 @@
 data/
+dist/
+instalador/node/
+.playwright-mcp/

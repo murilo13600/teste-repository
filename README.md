@@ -28,6 +28,12 @@ Os dados ficam salvos em `data/dados.json`, com um backup automático por dia em
 
 > Sem Node? Dá pra abrir o `index.html` direto no navegador. Nesse caso os dados ficam salvos só naquele navegador. Use **Ajustes → Exportar backup** de vez em quando.
 
+## Instalador para Windows
+
+`instalador/financas-em-dia.iss` gera um `.exe` que já leva o Node e cria o ícone na área de trabalho. Quem instala não precisa de mais nada e começa com o app vazio; os dados ficam na pasta do app e são mantidos ao atualizar ou desinstalar.
+
+Para gerar: instale o [Inno Setup](https://jrsoftware.org/isinfo.php), coloque `node.exe` e `LICENSE` do Node em `instalador/node/` e rode `ISCC.exe instalador\financas-em-dia.iss`. O instalador sai em `dist/`.
+
 ## Atalhos
 
 | Tecla | Ação |
